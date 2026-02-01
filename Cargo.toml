@@ -1,0 +1,48 @@
+[package]
+name = "radicle-plan-cob"
+version = "0.1.0"
+edition = "2021"
+description = "Radicle Collaborative Object type for implementation plans"
+license = "MIT OR Apache-2.0"
+repository = "https://app.radicle.xyz/nodes/seed.radicle.xyz/rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5"
+keywords = ["radicle", "cob", "plan", "collaboration"]
+categories = ["development-tools", "command-line-utilities"]
+rust-version = "1.85.0"
+
+[lib]
+name = "radicle_plan_cob"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rad-plan"
+path = "src/main.rs"
+
+[dependencies]
+# Radicle core - using git dependencies for portability
+radicle = { git = "https://seed.radicle.xyz/z3gqcJUoA1n9HaHKufZs5FCSGazv5.git", package = "radicle" }
+radicle-cob = { git = "https://seed.radicle.xyz/z3gqcJUoA1n9HaHKufZs5FCSGazv5.git", package = "radicle-cob" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = { version = "2", default-features = false }
+
+# Collections
+nonempty = "0.9.0"
+
+# CLI
+clap = { version = "4.0", features = ["derive"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+[dev-dependencies]
+pretty_assertions = "1.0"
+tempfile = "3.0"
+
+[features]
+default = []
+test = []
