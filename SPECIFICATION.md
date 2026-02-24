@@ -150,6 +150,19 @@ Actions are the operations that can be applied to a Plan COB. Each action is ser
 }
 ```
 
+### Edit Task Action
+
+```json
+{
+  "type": "task.edit",
+  "taskId": "abc123...",
+  "subject": "Updated task title",
+  "affectedFiles": ["src/client.rs", "src/config.rs"]
+}
+```
+
+All fields except `taskId` are optional. Only provided fields are updated; omitted fields are left unchanged.
+
 ### Set Task Status Action
 
 ```json
@@ -221,9 +234,18 @@ rad-plan show abc123 --json
 rad-plan task add abc123 "Create auth middleware" --estimate "4h"
 rad-plan task add abc123 "Write tests" --files "tests/auth.test.ts"
 
+# Edit tasks
+rad-plan task edit abc123 <task-id> --subject "Updated title"
+rad-plan task edit abc123 <task-id> --description "New details"
+rad-plan task edit abc123 <task-id> --files "src/client.rs,src/config.rs"
+
 # Update task status
 rad-plan task complete abc123 <task-id>
 rad-plan task start abc123 <task-id>
+
+# Comments
+rad-plan comment abc123 "Implementation note"
+rad-plan comment abc123 "Reply" --reply-to <comment-id>
 
 # Link to issues/patches
 rad-plan link abc123 --issue def456

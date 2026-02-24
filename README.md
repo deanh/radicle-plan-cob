@@ -42,6 +42,10 @@ rad-plan show <plan-id> --json
 rad-plan task add <plan-id> "Create auth middleware" --estimate "4h"
 rad-plan task add <plan-id> "Write tests" --files "tests/auth.test.ts"
 
+# Edit a task
+rad-plan task edit <plan-id> <task-id> --subject "Updated title"
+rad-plan task edit <plan-id> <task-id> --files "src/client.rs,src/config.rs"
+
 # Update task status
 rad-plan task start <plan-id> <task-id>
 rad-plan task complete <plan-id> <task-id>
@@ -49,6 +53,13 @@ rad-plan task complete <plan-id> <task-id>
 # List tasks
 rad-plan task list <plan-id>
 rad-plan task list <plan-id> --status pending
+```
+
+### Comments
+
+```bash
+rad-plan comment <plan-id> "Implementation note"
+rad-plan comment <plan-id> "Reply to your point" --reply-to <comment-id>
 ```
 
 ### Link to other COBs
