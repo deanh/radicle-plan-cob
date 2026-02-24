@@ -259,4 +259,46 @@ mod tests {
         let deserialized: Action = serde_json::from_str(&json).expect("deserialization failed");
         assert_eq!(action, deserialized);
     }
+
+    #[test]
+    fn test_edit_task_with_affected_files_roundtrips() {
+        use radicle::git::Oid;
+
+        let task_id = TaskId::from(Oid::from_str("0000000000000000000000000000000000000000").unwrap());
+        let action = Action::EditTask {
+            task_id,
+            subject: None,
+            description: None,
+            estimate: None,
+            affected_files: Some(vec!["src/client.rs".to_string(), "src/config.rs".to_string()]),
+        };
+
+        let json = serde_json::to_string(&action).expect("serialization failed");
+        assert!(json.contains("src/client.rs"));
+        assert!(json.contains("src/config.rs"));
+
+        let deserialized: Action = serde_json::from_str(&json).expect("deserialization failed");
+        assert_eq!(action, deserialized);
+    }
+
+    #[test]
+    fn test_edit_task_none_affected_files_omitted_in_json() {
+        use radicle::git::Oid;
+
+        let task_id = TaskId::from(Oid::from_str("0000000000000000000000000000000000000000").unwrap());
+        let action = Action::EditTask {
+            task_id,
+            subject: Some("Updated".to_string()),
+            description: None,
+            estimate: None,
+            affected_files: None,
+        };
+
+        let json = serde_json::to_string(&action).expect("serialization failed");
+        // None should be omitted via skip_serializing_if, not sent as null
+        assert!(!json.contains("affected_files"));
+
+        let deserialized: Action = serde_json::from_str(&json).expect("deserialization failed");
+        assert_eq!(action, deserialized);
+    }
 }

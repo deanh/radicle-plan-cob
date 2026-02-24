@@ -18,6 +18,7 @@ use std::str::FromStr;
 
 use clap::{Parser, Subcommand};
 
+use radicle::cob::thread::CommentId;
 use radicle::cob::ObjectId;
 use radicle::profile::Profile;
 use radicle::rad;
@@ -230,6 +231,10 @@ enum TaskCommands {
         /// New estimate
         #[arg(short, long)]
         estimate: Option<String>,
+
+        /// Affected files (replaces existing list)
+        #[arg(short, long)]
+        files: Vec<String>,
     },
 
     /// Remove a task
@@ -333,7 +338,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Show { id, json } => {
             let plans = Plans::open(&repo)?;
-            let plan_id = resolve_plan_id(&id)?;
+            let plan_id = resolve_plan_id_from_store(&id, &plans)?;
 
             let Some(plan) = plans.get(&plan_id)? else {
                 return Err(format!("Plan not found: {id}").into());
@@ -398,7 +403,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Status { id, status } => {
             let mut plans = Plans::open(&repo)?;
-            let plan_id = resolve_plan_id(&id)?;
+            let plan_id = resolve_plan_id_from_store(&id, &plans)?;
             let new_status = parse_plan_status(&status);
             let signer = profile.signer()?;
 
@@ -410,7 +415,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Task { command } => match command {
             TaskCommands::Add { plan_id, subject, description, estimate, files } => {
                 let mut plans = Plans::open(&repo)?;
-                let pid = resolve_plan_id(&plan_id)?;
+                let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
                 let signer = profile.signer()?;
 
                 let mut plan = plans.get_mut(&pid)?;
@@ -420,7 +425,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             TaskCommands::List { plan_id, status } => {
                 let plans = Plans::open(&repo)?;
-                let pid = resolve_plan_id(&plan_id)?;
+                let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
 
                 let Some(plan) = plans.get(&pid)? else {
                     return Err(format!("Plan not found: {plan_id}").into());
@@ -450,7 +455,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             TaskCommands::Complete { plan_id, task_id } => {
                 let mut plans = Plans::open(&repo)?;
-                let pid = resolve_plan_id(&plan_id)?;
+                let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
                 let tid = resolve_task_id(&task_id)?;
                 let signer = profile.signer()?;
 
@@ -461,7 +466,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             TaskCommands::Start { plan_id, task_id } => {
                 let mut plans = Plans::open(&repo)?;
-                let pid = resolve_plan_id(&plan_id)?;
+                let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
                 let tid = resolve_task_id(&task_id)?;
                 let signer = profile.signer()?;
 
@@ -470,11 +475,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("Task {} marked as in-progress", short_id(&tid.into()));
             }
-            TaskCommands::Edit { plan_id, task_id, subject, description, estimate } => {
+            TaskCommands::Edit { plan_id, task_id, subject, description, estimate, files } => {
                 let mut plans = Plans::open(&repo)?;
-                let pid = resolve_plan_id(&plan_id)?;
+                let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
                 let tid = resolve_task_id(&task_id)?;
                 let signer = profile.signer()?;
+
+                let affected_files = if files.is_empty() { None } else { Some(files) };
 
                 let mut plan = plans.get_mut(&pid)?;
                 plan.edit_task(
@@ -482,7 +489,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     subject,
                     description.map(Some),
                     estimate.map(Some),
-                    None,
+                    affected_files,
                     &signer,
                 )?;
 
@@ -490,7 +497,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             TaskCommands::Remove { plan_id, task_id } => {
                 let mut plans = Plans::open(&repo)?;
-                let pid = resolve_plan_id(&plan_id)?;
+                let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
                 let tid = resolve_task_id(&task_id)?;
                 let signer = profile.signer()?;
 
@@ -501,9 +508,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             TaskCommands::Link { plan_id, task_id, issue } => {
                 let mut plans = Plans::open(&repo)?;
-                let pid = resolve_plan_id(&plan_id)?;
+                let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
                 let tid = resolve_task_id(&task_id)?;
-                let issue_id = resolve_plan_id(&issue)?;
+                let issue_id = resolve_cob_id(&issue)?;
                 let signer = profile.signer()?;
 
                 let mut plan = plans.get_mut(&pid)?;
@@ -514,53 +521,57 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::Link { plan_id, issue, patch } => {
             let mut plans = Plans::open(&repo)?;
-            let pid = resolve_plan_id(&plan_id)?;
+            let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
             let signer = profile.signer()?;
 
             let mut plan = plans.get_mut(&pid)?;
 
             if let Some(i) = issue {
-                let issue_id = resolve_plan_id(&i)?;
+                let issue_id = resolve_cob_id(&i)?;
                 plan.link_issue(issue_id, &signer)?;
                 println!("Linked issue {} to plan {}", short_id(&issue_id), short_id(&pid));
             }
             if let Some(p) = patch {
-                let patch_id = resolve_plan_id(&p)?;
+                let patch_id = resolve_cob_id(&p)?;
                 plan.link_patch(patch_id, &signer)?;
                 println!("Linked patch {} to plan {}", short_id(&patch_id), short_id(&pid));
             }
         }
         Commands::Unlink { plan_id, issue, patch } => {
             let mut plans = Plans::open(&repo)?;
-            let pid = resolve_plan_id(&plan_id)?;
+            let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
             let signer = profile.signer()?;
 
             let mut plan = plans.get_mut(&pid)?;
 
             if let Some(i) = issue {
-                let issue_id = resolve_plan_id(&i)?;
+                let issue_id = resolve_cob_id(&i)?;
                 plan.unlink_issue(issue_id, &signer)?;
                 println!("Unlinked issue {} from plan {}", short_id(&issue_id), short_id(&pid));
             }
             if let Some(p) = patch {
-                let patch_id = resolve_plan_id(&p)?;
+                let patch_id = resolve_cob_id(&p)?;
                 plan.unlink_patch(patch_id, &signer)?;
                 println!("Unlinked patch {} from plan {}", short_id(&patch_id), short_id(&pid));
             }
         }
-        Commands::Comment { plan_id, message, reply_to: _ } => {
+        Commands::Comment { plan_id, message, reply_to } => {
             let mut plans = Plans::open(&repo)?;
-            let pid = resolve_plan_id(&plan_id)?;
+            let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
             let signer = profile.signer()?;
 
+            let reply_to: Option<CommentId> = reply_to
+                .map(|r| resolve_comment_id(&r))
+                .transpose()?;
+
             let mut plan = plans.get_mut(&pid)?;
-            plan.comment(&message, None, vec![], &signer)?;
+            plan.comment(&message, reply_to, vec![], &signer)?;
 
             println!("Comment added to plan {}", short_id(&pid));
         }
         Commands::Export { id, format, output } => {
             let plans = Plans::open(&repo)?;
-            let plan_id = resolve_plan_id(&id)?;
+            let plan_id = resolve_plan_id_from_store(&id, &plans)?;
 
             let Some(plan) = plans.get(&plan_id)? else {
                 return Err(format!("Plan not found: {id}").into());
@@ -581,7 +592,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Edit { id, title, description } => {
             let mut plans = Plans::open(&repo)?;
-            let pid = resolve_plan_id(&id)?;
+            let pid = resolve_plan_id_from_store(&id, &plans)?;
             let signer = profile.signer()?;
 
             let mut plan = plans.get_mut(&pid)?;
@@ -600,9 +611,48 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Parse a plan ID from a string (supports short form).
-fn resolve_plan_id(s: &str) -> Result<PlanId, Box<dyn std::error::Error>> {
-    ObjectId::from_str(s).map_err(|e| format!("Invalid plan ID '{s}': {e}").into())
+/// Parse a COB ID from a string (requires full 40-char hex ID).
+/// Used for external COB references (issues, patches).
+fn resolve_cob_id(s: &str) -> Result<ObjectId, Box<dyn std::error::Error>> {
+    ObjectId::from_str(s).map_err(|e| format!("Invalid ID '{s}': {e}").into())
+}
+
+/// Resolve a plan ID prefix against the plans store.
+fn resolve_plan_id_from_store<R>(s: &str, plans: &Plans<R>) -> Result<PlanId, Box<dyn std::error::Error>>
+where
+    R: radicle::prelude::ReadRepository + radicle::cob::Store,
+{
+    // Try full ID first
+    if let Ok(id) = ObjectId::from_str(s) {
+        return Ok(id);
+    }
+
+    // Validate hex prefix
+    let prefix = s.to_lowercase();
+    if prefix.is_empty() || !prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("Invalid plan ID '{s}': not a valid hex string").into());
+    }
+
+    // Search all plans for prefix matches
+    let mut matches: Vec<ObjectId> = Vec::new();
+    for result in plans.all()? {
+        let (id, _plan) = result?;
+        if id.to_string().starts_with(&prefix) {
+            matches.push(id);
+        }
+    }
+
+    match matches.len() {
+        0 => Err(format!("No plan found matching prefix '{s}'").into()),
+        1 => Ok(matches[0]),
+        n => {
+            let ids: Vec<String> = matches.iter().map(|id| short_id(id)).collect();
+            Err(format!(
+                "Ambiguous plan ID prefix '{s}': {n} plans match ({})",
+                ids.join(", ")
+            ).into())
+        }
+    }
 }
 
 /// Parse a task ID from a string.
@@ -610,6 +660,13 @@ fn resolve_task_id(s: &str) -> Result<TaskId, Box<dyn std::error::Error>> {
     use radicle::git::Oid;
     let oid = Oid::from_str(s).map_err(|e| format!("Invalid task ID '{s}': {e}"))?;
     Ok(TaskId::from(oid))
+}
+
+/// Parse a comment ID from a string.
+fn resolve_comment_id(s: &str) -> Result<CommentId, Box<dyn std::error::Error>> {
+    use radicle::git::Oid;
+    let oid = Oid::from_str(s).map_err(|e| format!("Invalid comment ID '{s}': {e}"))?;
+    Ok(CommentId::from(oid))
 }
 
 /// Get a short form of an object ID.
@@ -638,6 +695,41 @@ fn parse_task_status(s: &str) -> TaskStatus {
         "completed" | "complete" | "done" => TaskStatus::Completed,
         "skipped" | "skip" => TaskStatus::Skipped,
         _ => TaskStatus::Pending,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_comment_id_valid() {
+        let id = resolve_comment_id("abcdef0000000000000000000000000000000001").unwrap();
+        assert_eq!(id.to_string(), "abcdef0000000000000000000000000000000001");
+    }
+
+    #[test]
+    fn test_resolve_comment_id_invalid() {
+        assert!(resolve_comment_id("not-a-valid-oid").is_err());
+        assert!(resolve_comment_id("").is_err());
+        assert!(resolve_comment_id("abcdef").is_err()); // too short
+    }
+
+    #[test]
+    fn test_resolve_task_id_valid() {
+        let id = resolve_task_id("0000000000000000000000000000000000000000").unwrap();
+        assert_eq!(id.to_string(), "0000000000000000000000000000000000000000");
+    }
+
+    #[test]
+    fn test_resolve_cob_id_valid() {
+        let id = resolve_cob_id("abcdef0000000000000000000000000000000001").unwrap();
+        assert_eq!(id.to_string(), "abcdef0000000000000000000000000000000001");
+    }
+
+    #[test]
+    fn test_resolve_cob_id_rejects_prefix() {
+        assert!(resolve_cob_id("abcdef").is_err());
     }
 }
 
