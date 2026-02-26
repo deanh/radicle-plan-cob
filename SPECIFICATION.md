@@ -212,6 +212,8 @@ Follows the same model as Radicle Issues and Patches:
 
 ## CLI Usage
 
+All commands accept short-form IDs (minimum 7 hex characters) or full 40-character IDs. Short prefixes are resolved automatically; ambiguous prefixes produce a clear error.
+
 ```bash
 # Create a plan
 rad-plan open "Implement user auth" --description "JWT-based auth system"
@@ -220,33 +222,33 @@ rad-plan open "Implement user auth" --description "JWT-based auth system"
 rad-plan list
 rad-plan list --status in-progress
 
-# Show plan details
-rad-plan show abc123
-rad-plan show abc123 --json
+# Show plan details (short-form ID)
+rad-plan show abc1234
+rad-plan show abc1234 --json
 
 # Add tasks
-rad-plan task add abc123 "Create auth middleware" --estimate "4h"
-rad-plan task add abc123 "Write tests" --files "tests/auth.test.ts"
+rad-plan task add abc1234 "Create auth middleware" --estimate "4h"
+rad-plan task add abc1234 "Write tests" --files "tests/auth.test.ts"
 
-# Edit tasks
-rad-plan task edit abc123 <task-id> --subject "Updated title"
-rad-plan task edit abc123 <task-id> --description "New details"
-rad-plan task edit abc123 <task-id> --files "src/client.rs,src/config.rs"
+# Edit tasks (short-form plan and task IDs)
+rad-plan task edit abc1234 def5678 --subject "Updated title"
+rad-plan task edit abc1234 def5678 --description "New details"
+rad-plan task edit abc1234 def5678 --files "src/client.rs,src/config.rs"
 
-# Link a task to a commit (marks it done)
-rad-plan task link-commit abc123 <task-id> --commit <oid>
+# Link a task to a commit (short-form commit SHA)
+rad-plan task link-commit abc1234 def5678 --commit 9a1b2c3
 
-# Comments
-rad-plan comment abc123 "Implementation note"
-rad-plan comment abc123 "Reply" --reply-to <comment-id>
+# Comments (short-form reply-to ID)
+rad-plan comment abc1234 "Implementation note"
+rad-plan comment abc1234 "Reply" --reply-to 1234567
 
-# Link to issues/patches
-rad-plan link abc123 --issue def456
-rad-plan link abc123 --patch ghi789
+# Link to issues/patches (short-form IDs)
+rad-plan link abc1234 --issue 108a1dc
+rad-plan link abc1234 --patch aabb123
 
 # Export
-rad-plan export abc123 --format md
-rad-plan export abc123 --format json
+rad-plan export abc1234 --format md
+rad-plan export abc1234 --format json
 ```
 
 ## Integration with rad-skill
