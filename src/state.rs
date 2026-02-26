@@ -58,46 +58,6 @@ impl std::str::FromStr for PlanStatus {
     }
 }
 
-/// Task status within a plan.
-#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum TaskStatus {
-    /// Task is pending, not yet started.
-    #[default]
-    Pending,
-    /// Task is currently in progress.
-    InProgress,
-    /// Task has been completed.
-    Completed,
-    /// Task has been skipped or cancelled.
-    Skipped,
-}
-
-impl std::fmt::Display for TaskStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Pending => write!(f, "pending"),
-            Self::InProgress => write!(f, "in-progress"),
-            Self::Completed => write!(f, "completed"),
-            Self::Skipped => write!(f, "skipped"),
-        }
-    }
-}
-
-impl std::str::FromStr for TaskStatus {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "pending" => Ok(Self::Pending),
-            "in-progress" | "inprogress" | "in_progress" => Ok(Self::InProgress),
-            "completed" | "done" => Ok(Self::Completed),
-            "skipped" | "cancelled" | "canceled" => Ok(Self::Skipped),
-            _ => Err(format!("unknown task status: {s}")),
-        }
-    }
-}
-
 /// A task within a plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,8 +72,6 @@ pub struct Task {
     /// Optional time estimate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimate: Option<String>,
-    /// Current status.
-    pub status: TaskStatus,
     /// Tasks that must be completed before this one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocked_by: Vec<TaskId>,
@@ -123,12 +81,13 @@ pub struct Task {
     /// Linked Radicle issue (if task was converted to an issue).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked_issue: Option<ObjectId>,
+    /// Linked commit OID — when present, the task is considered done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_commit: Option<Oid>,
     /// Author who created the task.
     pub author: Did,
     /// When the task was created.
     pub created_at: Timestamp,
-    /// When the task was last updated.
-    pub updated_at: Timestamp,
 }
 
 impl Task {
@@ -147,13 +106,12 @@ impl Task {
             subject,
             description,
             estimate,
-            status: TaskStatus::Pending,
             blocked_by: Vec::new(),
             affected_files,
             linked_issue: None,
+            linked_commit: None,
             author: author.into(),
             created_at: timestamp,
-            updated_at: timestamp,
         }
     }
 
@@ -162,9 +120,9 @@ impl Task {
         !self.blocked_by.is_empty()
     }
 
-    /// Check if the task is done (completed or skipped).
+    /// Check if the task is done (has a linked commit).
     pub fn is_done(&self) -> bool {
-        matches!(self.status, TaskStatus::Completed | TaskStatus::Skipped)
+        self.linked_commit.is_some()
     }
 }
 
@@ -266,24 +224,9 @@ impl Plan {
         self.tasks.iter().find(|t| &t.id == id)
     }
 
-    /// Get pending tasks.
-    pub fn pending_tasks(&self) -> impl Iterator<Item = &Task> {
-        self.tasks.iter().filter(|t| t.status == TaskStatus::Pending)
-    }
-
-    /// Get in-progress tasks.
-    pub fn in_progress_tasks(&self) -> impl Iterator<Item = &Task> {
-        self.tasks.iter().filter(|t| t.status == TaskStatus::InProgress)
-    }
-
-    /// Get completed tasks.
-    pub fn completed_tasks(&self) -> impl Iterator<Item = &Task> {
-        self.tasks.iter().filter(|t| t.status == TaskStatus::Completed)
-    }
-
-    /// Get unblocked pending tasks.
+    /// Get tasks that are not yet done and whose blockers are all done.
     pub fn unblocked_tasks(&self) -> impl Iterator<Item = &Task> {
-        let completed_ids: BTreeSet<_> = self
+        let done_ids: BTreeSet<_> = self
             .tasks
             .iter()
             .filter(|t| t.is_done())
@@ -291,8 +234,8 @@ impl Plan {
             .collect();
 
         self.tasks.iter().filter(move |t| {
-            t.status == TaskStatus::Pending
-                && t.blocked_by.iter().all(|b| completed_ids.contains(b))
+            !t.is_done()
+                && t.blocked_by.iter().all(|b| done_ids.contains(b))
         })
     }
 
@@ -375,14 +318,6 @@ mod tests {
     }
 
     #[test]
-    fn test_task_status_display() {
-        assert_eq!(TaskStatus::Pending.to_string(), "pending");
-        assert_eq!(TaskStatus::InProgress.to_string(), "in-progress");
-        assert_eq!(TaskStatus::Completed.to_string(), "completed");
-        assert_eq!(TaskStatus::Skipped.to_string(), "skipped");
-    }
-
-    #[test]
     fn test_task_is_done() {
         use radicle::git::Oid;
 
@@ -394,21 +329,18 @@ mod tests {
             subject: "Test".to_string(),
             description: None,
             estimate: None,
-            status: TaskStatus::Pending,
             blocked_by: vec![],
             affected_files: vec![],
             linked_issue: None,
+            linked_commit: None,
             author,
             created_at: Timestamp::from_secs(0),
-            updated_at: Timestamp::from_secs(0),
         };
 
         assert!(!task.is_done());
-        task.status = TaskStatus::InProgress;
-        assert!(!task.is_done());
-        task.status = TaskStatus::Completed;
-        assert!(task.is_done());
-        task.status = TaskStatus::Skipped;
+
+        // Linking a commit marks the task as done
+        task.linked_commit = Some(Oid::from_str("abcdef0000000000000000000000000000000001").unwrap());
         assert!(task.is_done());
     }
 }

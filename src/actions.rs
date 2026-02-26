@@ -10,7 +10,9 @@ use radicle::cob::thread::CommentId;
 use radicle::cob::{Embed, ObjectId, Title};
 use radicle::prelude::Did;
 
-use crate::state::{PlanStatus, TaskId, TaskStatus};
+use radicle::git::Oid;
+
+use crate::state::{PlanStatus, TaskId};
 
 /// Plan action. Represents all possible mutations to a plan's state.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -87,13 +89,22 @@ pub enum Action {
         affected_files: Option<Vec<String>>,
     },
 
-    /// Set a task's status.
+    /// Set a task's status (legacy — kept for backward-compatible deserialization, applied as no-op).
     #[serde(rename = "task.status")]
     SetTaskStatus {
         /// Task ID.
         task_id: TaskId,
-        /// New status.
-        status: TaskStatus,
+        /// Legacy status value (ignored on apply).
+        status: serde_json::Value,
+    },
+
+    /// Link a task to a commit (marks the task as done).
+    #[serde(rename = "task.linkCommit")]
+    LinkTaskToCommit {
+        /// Task ID.
+        task_id: TaskId,
+        /// Commit OID that completes this task.
+        commit: Oid,
     },
 
     /// Remove a task from the plan.
@@ -244,20 +255,26 @@ mod tests {
     }
 
     #[test]
-    fn test_task_action_serialization() {
+    fn test_link_task_to_commit_serialization() {
         use radicle::git::Oid;
 
         let task_id = TaskId::from(Oid::from_str("0000000000000000000000000000000000000000").unwrap());
-        let action = Action::SetTaskStatus {
-            task_id,
-            status: TaskStatus::Completed,
-        };
+        let commit = Oid::from_str("abcdef0000000000000000000000000000000001").unwrap();
+        let action = Action::LinkTaskToCommit { task_id, commit };
 
         let json = serde_json::to_string(&action).expect("serialization failed");
-        assert!(json.contains("\"type\":\"task.status\""));
+        assert!(json.contains("\"type\":\"task.linkCommit\""));
 
         let deserialized: Action = serde_json::from_str(&json).expect("deserialization failed");
         assert_eq!(action, deserialized);
+    }
+
+    #[test]
+    fn test_legacy_set_task_status_deserializes() {
+        // Old COBs contain task.status actions — they must still deserialize (as no-op)
+        let json = r#"{"type":"task.status","task_id":"0000000000000000000000000000000000000000","status":"completed"}"#;
+        let action: Action = serde_json::from_str(json).expect("legacy deserialization failed");
+        assert!(matches!(action, Action::SetTaskStatus { .. }));
     }
 
     #[test]

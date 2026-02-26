@@ -53,26 +53,16 @@ struct Task {
     subject: String,               // Task title
     description: Option<String>,   // Detailed description
     estimate: Option<String>,      // Time estimate (e.g., "2h", "1d")
-    status: TaskStatus,
     blocked_by: Vec<TaskId>,       // Task dependencies
     affected_files: Vec<String>,   // Files this task will modify
     linked_issue: Option<ObjectId>, // If converted to Radicle issue
+    linked_commit: Option<Oid>,    // Commit that completes this task
     author: Did,
     created_at: Timestamp,
-    updated_at: Timestamp,
 }
 ```
 
-### Task Status
-
-```rust
-enum TaskStatus {
-    Pending,    // Not started
-    InProgress, // Currently being worked on
-    Completed,  // Done
-    Skipped,    // Won't be done
-}
-```
+A task is considered **done** when `linked_commit` is `Some`. There is no mutable status field — completion is signaled by linking the commit that implements the task.
 
 ## Actions
 
@@ -93,11 +83,12 @@ Actions are the operations that can be applied to a Plan COB. Each action is ser
 |--------|-------------|---------------|
 | `task.add` | Add a new task | Author or delegate |
 | `task.edit` | Edit task details | Author or delegate |
-| `task.status` | Change task status | Author or delegate |
+| `task.linkCommit` | Link task to a commit (marks done) | Author or delegate |
 | `task.remove` | Remove a task | Author or delegate |
 | `task.reorder` | Reorder tasks | Author or delegate |
 | `task.blockedBy` | Set task dependencies | Author or delegate |
 | `task.linkIssue` | Link task to Radicle issue | Author or delegate |
+| `task.status` | _(deprecated, no-op)_ Legacy status change | Author or delegate |
 
 ### Linking Actions
 
@@ -163,15 +154,17 @@ Actions are the operations that can be applied to a Plan COB. Each action is ser
 
 All fields except `taskId` are optional. Only provided fields are updated; omitted fields are left unchanged.
 
-### Set Task Status Action
+### Link Task to Commit Action
 
 ```json
 {
-  "type": "task.status",
-  "taskId": "abc123...",
-  "status": "completed"
+  "type": "task.linkCommit",
+  "task_id": "abc123...",
+  "commit": "def456..."
 }
 ```
+
+> **Deprecated:** The `task.status` action is still accepted for backward compatibility with existing COBs but is applied as a no-op.
 
 ### Link Issue Action
 
@@ -202,8 +195,9 @@ Like other Radicle COBs, Plans use operation-based CRDTs:
 
 ### Conflict Resolution
 
-- **Status**: Last-writer-wins based on timestamp
+- **Plan Status**: Last-writer-wins based on timestamp
 - **Tasks**: Ordered by creation entry ID, reorder action overwrites
+- **Linked commits**: Last-writer-wins (linking a second commit to the same task replaces the first)
 - **Sets (labels, assignees, issues, patches)**: Union of all additions, intersection of removals
 - **Thread**: Standard Radicle thread CRDT semantics
 
@@ -239,9 +233,8 @@ rad-plan task edit abc123 <task-id> --subject "Updated title"
 rad-plan task edit abc123 <task-id> --description "New details"
 rad-plan task edit abc123 <task-id> --files "src/client.rs,src/config.rs"
 
-# Update task status
-rad-plan task complete abc123 <task-id>
-rad-plan task start abc123 <task-id>
+# Link a task to a commit (marks it done)
+rad-plan task link-commit abc123 <task-id> --commit <oid>
 
 # Comments
 rad-plan comment abc123 "Implementation note"

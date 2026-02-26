@@ -37,7 +37,7 @@ use radicle::prelude::{Did, Doc, ReadRepository, RepoId};
 use radicle::storage::{HasRepoId, RepositoryError, SignRepository, WriteRepository};
 
 pub use actions::Action;
-pub use state::{Plan, PlanStatus, Task, TaskId, TaskStatus};
+pub use state::{Plan, PlanStatus, Task, TaskId};
 
 /// Plan operation.
 pub type Op = cob::Op<Action>;
@@ -236,13 +236,15 @@ impl Plan {
                     if let Some(f) = affected_files {
                         task.affected_files = f;
                     }
-                    task.updated_at = timestamp;
                 }
             }
-            Action::SetTaskStatus { task_id, status } => {
+            Action::SetTaskStatus { .. } => {
+                // Legacy no-op: old COBs may contain task.status actions.
+                log::debug!(target: "plan", "Ignoring legacy SetTaskStatus action");
+            }
+            Action::LinkTaskToCommit { task_id, commit } => {
                 if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
-                    task.status = status;
-                    task.updated_at = timestamp;
+                    task.linked_commit = Some(commit);
                 }
             }
             Action::RemoveTask { task_id } => {
@@ -266,7 +268,6 @@ impl Plan {
             Action::SetTaskBlockedBy { task_id, blocked_by } => {
                 if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
                     task.blocked_by = blocked_by;
-                    task.updated_at = timestamp;
                 }
             }
             Action::LinkIssue { issue_id } => {
@@ -284,7 +285,6 @@ impl Plan {
             Action::LinkTaskToIssue { task_id, issue_id } => {
                 if let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) {
                     task.linked_issue = Some(issue_id);
-                    task.updated_at = timestamp;
                 }
             }
             Action::AddCriticalFile { path } => {
@@ -350,6 +350,7 @@ impl Plan {
             | Action::LinkPatch { .. }
             | Action::UnlinkPatch { .. }
             | Action::LinkTaskToIssue { .. }
+            | Action::LinkTaskToCommit { .. }
             | Action::AddCriticalFile { .. }
             | Action::RemoveCriticalFile { .. } => Authorization::from(*actor == author),
             // Only delegates can assign or label.
@@ -640,18 +641,18 @@ where
         })
     }
 
-    /// Set task status.
-    pub fn set_task_status<G>(
+    /// Link a task to a commit, marking it as done.
+    pub fn link_task_to_commit<G>(
         &mut self,
         task_id: TaskId,
-        status: TaskStatus,
+        commit: radicle::git::Oid,
         signer: &Device<G>,
     ) -> Result<EntryId, Error>
     where
         G: crypto::signature::Signer<crypto::Signature>,
     {
-        self.transaction("Set task status", signer, |tx| {
-            tx.push(Action::SetTaskStatus { task_id, status })
+        self.transaction("Link task to commit", signer, |tx| {
+            tx.push(Action::LinkTaskToCommit { task_id, commit })
         })
     }
 

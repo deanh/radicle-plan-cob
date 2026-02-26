@@ -5,7 +5,7 @@
 //!   rad-plan list [--status <status>]
 //!   rad-plan show <id>
 //!   rad-plan task add <plan-id> <subject> [--description <desc>]
-//!   rad-plan task complete <plan-id> <task-id>
+//!   rad-plan task link-commit <plan-id> <task-id> --commit <oid>
 //!   rad-plan task list <plan-id>
 //!   rad-plan link --issue <issue-id> <plan-id>
 //!   rad-plan link --patch <patch-id> <plan-id>
@@ -24,7 +24,7 @@ use radicle::profile::Profile;
 use radicle::rad;
 use radicle::storage::ReadStorage;
 
-use radicle_plan_cob::{PlanId, PlanStatus, Plans, TaskId, TaskStatus};
+use radicle_plan_cob::{PlanId, PlanStatus, Plans, TaskId};
 
 /// rad-plan: Manage implementation plans as Radicle COBs
 #[derive(Parser)]
@@ -188,28 +188,19 @@ enum TaskCommands {
     List {
         /// Plan ID
         plan_id: String,
-
-        /// Filter by status
-        #[arg(short, long)]
-        status: Option<String>,
     },
 
-    /// Mark a task as complete
-    Complete {
+    /// Link a task to a commit (marks the task as done)
+    LinkCommit {
         /// Plan ID
         plan_id: String,
 
         /// Task ID
         task_id: String,
-    },
 
-    /// Mark a task as in-progress
-    Start {
-        /// Plan ID
-        plan_id: String,
-
-        /// Task ID
-        task_id: String,
+        /// Commit OID
+        #[arg(long)]
+        commit: String,
     },
 
     /// Edit a task
@@ -331,9 +322,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 let task_count = plan.tasks().len();
-                let completed = plan.tasks().iter().filter(|t| matches!(t.status, TaskStatus::Completed)).count();
+                let done = plan.tasks().iter().filter(|t| t.is_done()).count();
 
-                println!("{} {} {} [{}/{}]", status_icon, short_id(&id), plan.title(), completed, task_count);
+                println!("{} {} {} [{}/{}]", status_icon, short_id(&id), plan.title(), done, task_count);
             }
         }
         Commands::Show { id, json } => {
@@ -365,15 +356,13 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 println!();
 
                 for task in plan.tasks() {
-                    let status_icon = match task.status {
-                        TaskStatus::Pending => "[ ]",
-                        TaskStatus::InProgress => "[>]",
-                        TaskStatus::Completed => "[x]",
-                        TaskStatus::Skipped => "[-]",
-                    };
-
+                    let checkbox = if task.is_done() { "[x]" } else { "[ ]" };
                     let estimate = task.estimate.as_ref().map(|e| format!(" ({})", e)).unwrap_or_default();
-                    println!("{} {}{}", status_icon, task.subject, estimate);
+                    let commit_info = task.linked_commit.as_ref().map(|c| {
+                        let s = c.to_string();
+                        format!(" -> {}", &s[..7.min(s.len())])
+                    }).unwrap_or_default();
+                    println!("{} {}{}{}", checkbox, task.subject, estimate, commit_info);
 
                     if let Some(desc) = &task.description {
                         if !desc.is_empty() {
@@ -423,7 +412,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("Task added to plan {}: {}", short_id(&pid), subject);
             }
-            TaskCommands::List { plan_id, status } => {
+            TaskCommands::List { plan_id } => {
                 let plans = Plans::open(&repo)?;
                 let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
 
@@ -431,49 +420,30 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     return Err(format!("Plan not found: {plan_id}").into());
                 };
 
-                let status_filter = status.as_ref().map(|s| parse_task_status(s));
-
                 println!("Tasks for plan: {}", plan.title());
                 println!();
 
                 for task in plan.tasks() {
-                    if let Some(filter) = &status_filter {
-                        if &task.status != filter {
-                            continue;
-                        }
-                    }
+                    let checkbox = if task.is_done() { "[x]" } else { "[ ]" };
+                    let commit_info = task.linked_commit.as_ref().map(|c| {
+                        let s = c.to_string();
+                        format!(" -> {}", &s[..7.min(s.len())])
+                    }).unwrap_or_default();
 
-                    let status_icon = match task.status {
-                        TaskStatus::Pending => "[ ]",
-                        TaskStatus::InProgress => "[>]",
-                        TaskStatus::Completed => "[x]",
-                        TaskStatus::Skipped => "[-]",
-                    };
-
-                    println!("{} {} ({})", status_icon, task.subject, short_id(&task.id.into()));
+                    println!("{} {} ({}){}", checkbox, task.subject, short_id(&task.id.into()), commit_info);
                 }
             }
-            TaskCommands::Complete { plan_id, task_id } => {
+            TaskCommands::LinkCommit { plan_id, task_id, commit } => {
                 let mut plans = Plans::open(&repo)?;
                 let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
                 let tid = resolve_task_id(&task_id)?;
+                let oid = resolve_oid(&commit)?;
                 let signer = profile.signer()?;
 
                 let mut plan = plans.get_mut(&pid)?;
-                plan.set_task_status(tid, TaskStatus::Completed, &signer)?;
+                plan.link_task_to_commit(tid, oid, &signer)?;
 
-                println!("Task {} marked as complete", short_id(&tid.into()));
-            }
-            TaskCommands::Start { plan_id, task_id } => {
-                let mut plans = Plans::open(&repo)?;
-                let pid = resolve_plan_id_from_store(&plan_id, &plans)?;
-                let tid = resolve_task_id(&task_id)?;
-                let signer = profile.signer()?;
-
-                let mut plan = plans.get_mut(&pid)?;
-                plan.set_task_status(tid, TaskStatus::InProgress, &signer)?;
-
-                println!("Task {} marked as in-progress", short_id(&tid.into()));
+                println!("Task {} linked to commit {}", short_id(&tid.into()), short_id(&oid.into()));
             }
             TaskCommands::Edit { plan_id, task_id, subject, description, estimate, files } => {
                 let mut plans = Plans::open(&repo)?;
@@ -662,6 +632,12 @@ fn resolve_task_id(s: &str) -> Result<TaskId, Box<dyn std::error::Error>> {
     Ok(TaskId::from(oid))
 }
 
+/// Parse a git OID from a string.
+fn resolve_oid(s: &str) -> Result<radicle::git::Oid, Box<dyn std::error::Error>> {
+    use radicle::git::Oid;
+    Oid::from_str(s).map_err(|e| format!("Invalid OID '{s}': {e}").into())
+}
+
 /// Parse a comment ID from a string.
 fn resolve_comment_id(s: &str) -> Result<CommentId, Box<dyn std::error::Error>> {
     use radicle::git::Oid;
@@ -684,17 +660,6 @@ fn parse_plan_status(s: &str) -> PlanStatus {
         "completed" | "complete" | "done" => PlanStatus::Completed,
         "archived" | "archive" => PlanStatus::Archived,
         _ => PlanStatus::Draft,
-    }
-}
-
-/// Parse a task status string.
-fn parse_task_status(s: &str) -> TaskStatus {
-    match s.to_lowercase().as_str() {
-        "pending" => TaskStatus::Pending,
-        "in-progress" | "inprogress" | "in_progress" | "started" => TaskStatus::InProgress,
-        "completed" | "complete" | "done" => TaskStatus::Completed,
-        "skipped" | "skip" => TaskStatus::Skipped,
-        _ => TaskStatus::Pending,
     }
 }
 
@@ -751,13 +716,7 @@ fn export_markdown(id: &PlanId, plan: &radicle_plan_cob::Plan) -> String {
     out.push_str(&format!("## Tasks ({})\n\n", plan.tasks().len()));
 
     for task in plan.tasks() {
-        let checkbox = match task.status {
-            TaskStatus::Pending => "[ ]",
-            TaskStatus::InProgress => "[>]",
-            TaskStatus::Completed => "[x]",
-            TaskStatus::Skipped => "[-]",
-        };
-
+        let checkbox = if task.is_done() { "[x]" } else { "[ ]" };
         let estimate = task.estimate.as_ref().map(|e| format!(" _({})", e)).unwrap_or_default();
         out.push_str(&format!("- {} {}{}\n", checkbox, task.subject, estimate));
 
